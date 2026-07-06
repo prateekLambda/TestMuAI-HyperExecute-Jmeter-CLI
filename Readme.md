@@ -101,6 +101,20 @@ python hyperexecute_automation.py \
   --concurrency 2
 ```
 
+Full example combining credentials, a local JMX upload, and test parameters:
+
+```bash
+python3 hyperexecute_automation.py \
+  --username your_username \
+  --api-key your_api_key \
+  --project-id your_project_id \
+  --upload-jmx /path/to/your/test-folder \
+  --users 300 \
+  --duration 250 \
+  --rampup 60 \
+  --jmx-path your-test-folder/your-test.jmx
+```
+
 Full option reference:
 
 ### Required (if not set via environment variables)
