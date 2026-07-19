@@ -155,7 +155,10 @@ class HyperExecuteAPI:
     def trigger_job(self, users: int, duration: int, rampup: int,
                    concurrency: int = 1, splitcsv: bool = False,
                    job_label: Optional[str] = None,
-                   jmx_path: str = "hyperexecute-jmeter-/test.jmx") -> Optional[str]:
+                   jmx_path: str = "hyperexecute-jmeter-/test.jmx",
+                   runtime_language: str = "java", runtime_version: str = "11",
+                   region: Optional[str] = None,
+                   global_timeout: Optional[int] = None) -> Optional[str]:
         """
         Trigger a new JMeter job
 
@@ -167,10 +170,14 @@ class HyperExecuteAPI:
             splitcsv: Whether to split CSV files
             job_label: Optional job label for dashboard display (auto-generated if not provided)
             jmx_path: Path to the .jmx file relative to the HyperExecute project workspace
-            
+            runtime_language: Language of the execution runtime (default: java)
+            runtime_version: Version of the execution runtime (default: 11)
+            region: Optional HyperExecute region to run the job in (e.g. eastus)
+            global_timeout: Optional overall job timeout in minutes
+
         Returns:
             Job ID if successful, None otherwise
-            
+
         Note:
             This method automatically enables JMeter HTML report generation (-e -o report)
             which is required for dashboard data visualization. The report includes test
@@ -192,24 +199,32 @@ class HyperExecuteAPI:
         if job_label is None:
             job_label = f"JMeter-{users}users-{duration}s-{rampup}s-rampup"
         
+        jmeter_config = {
+            "users": users,
+            "duration": duration,
+            "rampup": rampup,
+            "splitcsv": splitcsv,
+            # CRITICAL: These args generate HTML report dashboard with test data
+            # -e: generate HTML report dashboard
+            # -o: output directory flag
+            # report: output directory name
+            # Without these, the dashboard will have no data to display
+            "args": ["-e", "-o", "report"],
+            "jmx": jmx_path
+        }
+        if region:
+            jmeter_config["region"] = region
+
         payload = {
-            "jmeter": [
-                {
-                    "users": users,
-                    "duration": duration,
-                    "rampup": rampup,
-                    "splitcsv": splitcsv,
-                    # CRITICAL: These args generate HTML report dashboard with test data
-                    # -e: generate HTML report dashboard
-                    # -o: output directory flag
-                    # report: output directory name
-                    # Without these, the dashboard will have no data to display
-                    "args": ["-e", "-o", "report"],
-                    "jmx": jmx_path
-                }
-            ],
+            "jmeter": [jmeter_config],
             "jobLabel": [job_label],  # Fixed: Added meaningful label for dashboard visibility
             "concurrency": concurrency,
+            "runtime": [
+                {
+                    "language": runtime_language,
+                    "version": runtime_version
+                }
+            ],
             "uploadArtefacts": [
                 {
                     "name": "JMeter",  # Fixed: Changed to "JMeter" to match dashboard artifact expectations
@@ -222,7 +237,9 @@ class HyperExecuteAPI:
                 }
             ]
         }
-        
+        if global_timeout is not None:
+            payload["globalTimeout"] = global_timeout
+
         try:
             print(f"🚀 Triggering job with users={users}, duration={duration}s, rampup={rampup}s...")
             print(f" URL: {url}")
@@ -510,6 +527,13 @@ Examples:
                             'preserving folder structure - e.g. for .jmx + CSV data files), to '
                             'upload to the HyperExecute project before triggering the job '
                             '(e.g. --upload-jmx ./test.jmx or --upload-jmx ./test-plan/)')
+    parser.add_argument('--runtime', type=str, default='java:11',
+                       help='Execution runtime as language:version (default: java:11)')
+    parser.add_argument('--region', type=str, default=None,
+                       help='HyperExecute region to run the job in (e.g. eastus). Uses the '
+                            'project/account default region if not set')
+    parser.add_argument('--global-timeout', type=int, default=None,
+                       help='Overall job timeout in minutes. Uses the platform default if not set')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug mode with verbose output for CI/CD troubleshooting')
     parser.add_argument('--no-download', action='store_true',
@@ -536,7 +560,13 @@ Examples:
     if not project_id:
         print("❌ Error: Project ID is required. Provide via --project-id or HYPEREXECUTE_PROJECT_ID env var")
         sys.exit(1)
-    
+
+    # Parse --runtime into language/version
+    if ':' not in args.runtime:
+        print(f"❌ Error: --runtime must be in language:version format (e.g. java:11), got '{args.runtime}'")
+        sys.exit(1)
+    runtime_language, runtime_version = args.runtime.split(':', 1)
+
     # Generate job label for display (will be used in trigger_job if not provided)
     if args.job_label is None:
         job_label_display = f"JMeter-{args.users}users-{args.duration}s-{args.rampup}s-rampup"
@@ -557,6 +587,11 @@ Examples:
     print(f"  - Concurrency: {args.concurrency}")
     print(f"  - Job Label: {job_label_display}")
     print(f"  - JMX Path: {jmx_path}")
+    print(f"  - Runtime: {runtime_language}:{runtime_version}")
+    if args.region:
+        print(f"  - Region: {args.region}")
+    if args.global_timeout is not None:
+        print(f"  - Global Timeout: {args.global_timeout}m")
     if args.debug:
         print(f"  - Debug Mode: ON")
         print(f"  - Skip Download: {args.no_download}")
@@ -586,7 +621,11 @@ Examples:
         rampup=args.rampup,
         concurrency=args.concurrency,
         job_label=args.job_label,
-        jmx_path=jmx_path
+        jmx_path=jmx_path,
+        runtime_language=runtime_language,
+        runtime_version=runtime_version,
+        region=args.region,
+        global_timeout=args.global_timeout
     )
     
     if not job_id:

@@ -112,7 +112,9 @@ python3 hyperexecute_automation.py \
   --users 300 \
   --duration 250 \
   --rampup 60 \
-  --jmx-path your-test-folder/your-test.jmx
+  --jmx-path your-test-folder/your-test.jmx \
+  --runtime java:11 \
+  --region eastus
 ```
 
 Full option reference:
@@ -136,6 +138,9 @@ Full option reference:
 | `--jmx-path` | str | `hyperexecute-jmeter-/test.jmx` | Path to the `.jmx` file inside the project workspace (or `HYPEREXECUTE_JMX_PATH` env var) |
 | `--upload-jmx` | str | — | Local file or directory to upload before triggering the job |
 | `--job-label` | str | auto-generated | Custom label shown on the HyperExecute dashboard |
+| `--runtime` | str | `java:11` | Execution runtime as `language:version` |
+| `--region` | str | platform/project default | HyperExecute region to run the job in (e.g. `eastus`) |
+| `--global-timeout` | int | platform default | Overall job timeout in minutes |
 
 ### Execution behavior
 
