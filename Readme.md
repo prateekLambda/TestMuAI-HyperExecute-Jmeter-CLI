@@ -1,6 +1,6 @@
 # HyperExecute Automation Script
 
-A Python script that automates running a JMeter performance test on LambdaTest HyperExecute: it triggers the job, monitors it to completion, waits for artifacts to be ready, and downloads the results as a zip file.
+A Python script that automates running a JMeter or Gatling performance test on LambdaTest HyperExecute: it triggers the job, monitors it to completion, waits for artifacts to be ready, and downloads the results as a zip file.
 
 Follow the steps below in order to go from a clean checkout to a downloaded test report.
 
@@ -8,7 +8,7 @@ Follow the steps below in order to go from a clean checkout to a downloaded test
 
 - Python 3.7+
 - A LambdaTest account with access to HyperExecute
-- A HyperExecute project already set up with a `.jmx` test plan (either already in the project workspace, or on your local machine to upload in Step 4)
+- A HyperExecute project already set up with a `.jmx` test plan (JMeter) or a Gatling simulation file/project (either already in the project workspace, or on your local machine to upload in Step 4)
 
 ## Step 2: Install dependencies
 
@@ -117,6 +117,41 @@ python3 hyperexecute_automation.py \
   --region eastus
 ```
 
+## Step 7b: Running a Gatling test instead
+
+Pass `--test-type gatling` and one of the three `--gatling-mode` load profiles. Each mode reads different parameters:
+
+| `--gatling-mode` | Meaning | Required flags |
+|---|---|---|
+| `stress` | Ramps to a total number of injected users over the test duration | `--users` (total users), `--duration` |
+| `capacity` | Ramps arrival rate from an initial to a final rate over the test duration | `--initial-users`, `--final-users`, `--duration` |
+| `soak` | Holds a constant arrival rate for the full test duration | `--users` (rate/sec), `--duration` |
+
+Just like `--upload-jmx`, `--upload-gatling` accepts a single simulation file or a whole project directory (uploaded recursively, preserving folder structure - use this for a full `src/test/java/...`-style package layout, which Gatling/Java requires):
+
+```bash
+# Stress: 10 total injected users over 120s
+python hyperexecute_automation.py \
+  --test-type gatling --gatling-mode stress \
+  --users 10 --duration 120 \
+  --upload-gatling ./gatling-project/ \
+  --gatling-path gatling-project/src/test/java/example/BasicSimulation.java
+
+# Capacity: ramp arrival rate from 1/s to 10/s over 120s
+python hyperexecute_automation.py \
+  --test-type gatling --gatling-mode capacity \
+  --initial-users 1 --final-users 10 --duration 120 \
+  --upload-gatling ./gatling-project/
+
+# Soak: constant arrival rate of 5/s for 600s
+python hyperexecute_automation.py \
+  --test-type gatling --gatling-mode soak \
+  --users 5 --duration 600 \
+  --upload-gatling ./gatling-project/
+```
+
+If the upload returns a remote path, the script uses it automatically and `--gatling-path` is ignored - same behavior as `--upload-jmx`/`--jmx-path`.
+
 Full option reference:
 
 ### Required (if not set via environment variables)
@@ -131,12 +166,18 @@ Full option reference:
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--users` | int | 100 | Number of users for the JMeter test |
+| `--test-type` | str | `jmeter` | `jmeter` or `gatling` |
+| `--users` | int | 100 | JMeter: number of users. Gatling `stress` mode: total injected users. Gatling `soak` mode: constant arrival rate/sec |
 | `--duration` | int | 120 | Test duration in seconds |
-| `--rampup` | int | 60 | Ramp-up period in seconds |
+| `--rampup` | int | 60 | Ramp-up period in seconds (JMeter only) |
 | `--concurrency` | int | 1 | Job concurrency level |
 | `--jmx-path` | str | `hyperexecute-jmeter-/test.jmx` | Path to the `.jmx` file inside the project workspace (or `HYPEREXECUTE_JMX_PATH` env var) |
 | `--upload-jmx` | str | — | Local file or directory to upload before triggering the job |
+| `--gatling-mode` | str | — | `stress`, `capacity`, or `soak` (required when `--test-type gatling`) |
+| `--initial-users` | int | — | Starting arrival rate/sec (Gatling `capacity` mode only) |
+| `--final-users` | int | — | Ending arrival rate/sec (Gatling `capacity` mode only) |
+| `--gatling-path` | str | `BasicSimulation.java` | Path to the Gatling simulation file inside the project workspace |
+| `--upload-gatling` | str | — | Local file or directory to upload before triggering the job |
 | `--job-label` | str | auto-generated | Custom label shown on the HyperExecute dashboard |
 | `--runtime` | str | `java:11` | Execution runtime as `language:version` |
 | `--region` | str | platform/project default | HyperExecute region to run the job in (e.g. `eastus`) |
@@ -366,6 +407,7 @@ Artifacts may still be processing — the script already waits for `completed` s
 ## Customizing the script
 
 - **Artifact upload paths**: edit the `uploadArtefacts` list inside `trigger_job()` in [hyperexecute_automation.py](hyperexecute_automation.py).
+- **Gatling injection types**: `trigger_gatling_job()` maps `--gatling-mode` to the platform's `injectionType` values via `HyperExecuteAPI.GATLING_INJECTION_TYPES`.
 - **Timeouts**: `check_job_status()` and `check_artifact_status()` both accept a `max_wait_time` argument (seconds).
 - **Extra headers**: add entries to `self.headers` in `HyperExecuteAPI.__init__`.
 

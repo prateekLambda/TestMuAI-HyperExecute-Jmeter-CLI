@@ -138,7 +138,7 @@ class HyperExecuteAPI:
                 print(f" Remote path: {remote_path}")
             else:
                 print(f" ⚠️  Upload succeeded but no remote path found in response; "
-                      f"will keep using the existing --jmx-path value")
+                      f"will keep using the existing test file path")
 
             return True, remote_path
 
@@ -270,8 +270,143 @@ class HyperExecuteAPI:
                 print(f"❌ Response Status: {e.response.status_code}")
                 print(f"❌ Response Body: {e.response.text}")
             return None
-    
-    def check_job_status(self, job_id: str, poll_interval: int = 10, 
+
+    # Maps our --gatling-mode CLI values to the injectionType string the
+    # runner needs to hit the right Gatling load-profile branch. Verified
+    # against a live trigger-job sweep - "capacityTest"/"soakTest" literal
+    # strings route to a different (closed-model) profile that ignores
+    # initial/final-user and rate overrides, so the ramp/constant-rate
+    # variants have to be requested via these values instead.
+    GATLING_INJECTION_TYPES = {
+        "stress": "stressPeakUsers",
+        "capacity": "rampUsersPerSec",
+        "soak": "constantUsersPerSec",
+    }
+
+    def trigger_gatling_job(self, gatling_mode: str, duration: int,
+                           users: Optional[int] = None,
+                           initial_users: Optional[int] = None,
+                           final_users: Optional[int] = None,
+                           concurrency: int = 1, splitcsv: bool = False,
+                           job_label: Optional[str] = None,
+                           filepath: str = "BasicSimulation.java",
+                           runtime_language: str = "java", runtime_version: str = "11",
+                           region: Optional[str] = None,
+                           global_timeout: Optional[int] = None) -> Optional[str]:
+        """
+        Trigger a new Gatling job
+
+        Args:
+            gatling_mode: One of "stress", "capacity", "soak" - selects the injectionType
+                and which of users/initial_users/final_users are required
+            duration: Duration of the test in seconds (all modes)
+            users: Total injected users (stress mode) or constant arrival rate per
+                second (soak mode)
+            initial_users: Starting arrival rate per second (capacity mode)
+            final_users: Ending arrival rate per second (capacity mode)
+            concurrency: Job concurrency level
+            splitcsv: Whether to split CSV files
+            job_label: Optional job label for dashboard display (auto-generated if not provided)
+            filepath: Path to the Gatling simulation file relative to the HyperExecute
+                project workspace (or the path returned by uploading one)
+            runtime_language: Language of the execution runtime (default: java)
+            runtime_version: Version of the execution runtime (default: 11)
+            region: Optional HyperExecute region to run the job in (e.g. eastus)
+            global_timeout: Optional overall job timeout in minutes
+
+        Returns:
+            Job ID if successful, None otherwise
+        """
+        if gatling_mode not in self.GATLING_INJECTION_TYPES:
+            print(f"❌ Error: --gatling-mode must be one of {list(self.GATLING_INJECTION_TYPES)}, "
+                  f"got '{gatling_mode}'")
+            return None
+
+        gatling_config = {
+            "duration": duration,
+            "splitcsv": splitcsv,
+            "injectionType": self.GATLING_INJECTION_TYPES[gatling_mode],
+            "filepath": filepath,
+        }
+
+        if gatling_mode == "stress":
+            if users is None:
+                print("❌ Error: --users is required for --gatling-mode stress")
+                return None
+            gatling_config["users"] = users
+        elif gatling_mode == "capacity":
+            if initial_users is None or final_users is None:
+                print("❌ Error: --initial-users and --final-users are required for --gatling-mode capacity")
+                return None
+            gatling_config["usersStart"] = initial_users
+            gatling_config["usersEnd"] = final_users
+        elif gatling_mode == "soak":
+            if users is None:
+                print("❌ Error: --users is required for --gatling-mode soak (used as the constant arrival rate)")
+                return None
+            gatling_config["users"] = users
+
+        if region:
+            gatling_config["region"] = region
+
+        if job_label is None:
+            job_label = f"Gatling-{gatling_mode}-{duration}s"
+
+        url = f"{self.base_url_trigger}/reception/api/project/{self.project_id}/trigger-job"
+        trigger_headers = {
+            'accept': 'application/json',
+            'accept-language': 'en-US,en;q=0.9',
+            'authorization': f'Basic {self.auth_token}',
+            'content-type': 'application/json',
+            'origin': 'https://hyperexecute.lambdatest.com'
+        }
+
+        payload = {
+            "gatling": [gatling_config],
+            "jobLabel": [job_label],
+            "concurrency": concurrency,
+            "runtime": [
+                {
+                    "language": runtime_language,
+                    "version": runtime_version
+                }
+            ],
+        }
+        if global_timeout is not None:
+            payload["globalTimeout"] = global_timeout
+
+        try:
+            print(f"🚀 Triggering Gatling {gatling_mode} job (duration={duration}s)...")
+            print(f" URL: {url}")
+            print(f" Payload: {json.dumps(payload, indent=2)}")
+
+            response = requests.post(url, headers=trigger_headers, json=payload, timeout=30)
+
+            print(f" Response Status: {response.status_code}")
+            print(f" Response Body: {response.text[:500]}")
+
+            response.raise_for_status()
+
+            result = response.json()
+            job_id = result.get('jobId') or result.get('jobID')
+
+            if result.get('status') == 'success' and job_id:
+                print(f"✅ Job triggered successfully!")
+                print(f" Job ID: {job_id}")
+                print(f" Org ID: {result.get('orgID')}")
+                return job_id
+            else:
+                print(f"❌ Failed to trigger job: {result}")
+                return None
+
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error triggering job: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"❌ Response Status: {e.response.status_code}")
+                print(f"❌ Response Body: {e.response.text}")
+            return None
+
+    def check_job_status(self, job_id: str, poll_interval: int = 10,
                         max_wait_time: int = 3600) -> bool:
         """
         Monitor job status until completion
@@ -449,11 +584,12 @@ class HyperExecuteAPI:
             response.raise_for_status()
             
             # Save the file
+            file_size = 0
             with open(output_filename, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            
-            file_size = len(response.content)
+                    file_size += len(chunk)
+
             print(f"✅ Artifact downloaded successfully!")
             print(f"📁 File: {output_filename}")
             print(f"📊 Size: {file_size:,} bytes ({file_size / 1024:.2f} KB)")
@@ -501,15 +637,31 @@ Examples:
                        default=None,
                        help='HyperExecute Project ID (or set HYPEREXECUTE_PROJECT_ID env var)')
     
+    # Test type
+    parser.add_argument('--test-type', type=str, choices=['jmeter', 'gatling'], default='jmeter',
+                       help='Which load testing tool to trigger (default: jmeter)')
+
     # Test parameters
     parser.add_argument('--users', type=int, default=100,
-                       help='Number of users for JMeter test (default: 100)')
+                       help='Number of users. For JMeter this is the JMeter test user count. '
+                            'For Gatling: total injected users in --gatling-mode stress, or the '
+                            'constant arrival rate/sec in --gatling-mode soak (default: 100)')
     parser.add_argument('--duration', type=int, default=120,
                        help='Test duration in seconds (default: 120)')
     parser.add_argument('--rampup', type=int, default=60,
-                       help='Ramp-up period in seconds (default: 60)')
+                       help='Ramp-up period in seconds (JMeter only, default: 60)')
     parser.add_argument('--concurrency', type=int, default=1,
                        help='Job concurrency level (default: 1)')
+    parser.add_argument('--gatling-mode', type=str, choices=['stress', 'capacity', 'soak'], default=None,
+                       help='Gatling load profile (required when --test-type gatling): '
+                            '"stress" ramps to --users total injected users over --duration; '
+                            '"capacity" ramps arrival rate from --initial-users to --final-users '
+                            'over --duration; "soak" holds a constant arrival rate of --users/sec '
+                            'for --duration')
+    parser.add_argument('--initial-users', type=int, default=None,
+                       help='Starting arrival rate per second (Gatling --gatling-mode capacity only)')
+    parser.add_argument('--final-users', type=int, default=None,
+                       help='Ending arrival rate per second (Gatling --gatling-mode capacity only)')
     parser.add_argument('--job-poll-interval', type=int, default=10,
                        help='Job status polling interval in seconds (default: 10)')
     parser.add_argument('--artifact-poll-interval', type=int, default=10,
@@ -527,6 +679,16 @@ Examples:
                             'preserving folder structure - e.g. for .jmx + CSV data files), to '
                             'upload to the HyperExecute project before triggering the job '
                             '(e.g. --upload-jmx ./test.jmx or --upload-jmx ./test-plan/)')
+    parser.add_argument('--gatling-path', type=str, default='BasicSimulation.java',
+                       help='Path to the Gatling simulation file relative to the HyperExecute '
+                            'project workspace (default: BasicSimulation.java). Ignored if '
+                            '--upload-gatling is used and the upload returns a remote path.')
+    parser.add_argument('--upload-gatling', type=str, default=None,
+                       help='Local path to a Gatling simulation file, or a project directory '
+                            '(uploaded recursively, preserving folder structure - e.g. for the '
+                            'full src/test/java/... package layout), to upload to the '
+                            'HyperExecute project before triggering the job '
+                            '(e.g. --upload-gatling ./gatling-project/)')
     parser.add_argument('--runtime', type=str, default='java:11',
                        help='Execution runtime as language:version (default: java:11)')
     parser.add_argument('--region', type=str, default=None,
@@ -547,18 +709,24 @@ Examples:
     api_key = args.api_key or os.environ.get('LT_ACCESS_KEY') or os.environ.get('LAMBDATEST_API_KEY')
     project_id = args.project_id or os.environ.get('HYPEREXECUTE_PROJECT_ID')
     jmx_path = args.jmx_path or os.environ.get('HYPEREXECUTE_JMX_PATH', 'hyperexecute-jmeter-/test.jmx')
-    
+    gatling_path = args.gatling_path
+
     # Validate required credentials
     if not username:
         print("❌ Error: Username is required. Provide via --username or LT_USERNAME env var")
         sys.exit(1)
-    
+
     if not api_key:
         print("❌ Error: API key is required. Provide via --api-key or LT_ACCESS_KEY env var")
         sys.exit(1)
-    
+
     if not project_id:
         print("❌ Error: Project ID is required. Provide via --project-id or HYPEREXECUTE_PROJECT_ID env var")
+        sys.exit(1)
+
+    if args.test_type == 'gatling' and args.gatling_mode is None:
+        print("❌ Error: --gatling-mode is required when --test-type gatling "
+              "(one of: stress, capacity, soak)")
         sys.exit(1)
 
     # Parse --runtime into language/version
@@ -567,12 +735,14 @@ Examples:
         sys.exit(1)
     runtime_language, runtime_version = args.runtime.split(':', 1)
 
-    # Generate job label for display (will be used in trigger_job if not provided)
-    if args.job_label is None:
-        job_label_display = f"JMeter-{args.users}users-{args.duration}s-{args.rampup}s-rampup"
-    else:
+    # Generate job label for display (will be used in the trigger call if not provided)
+    if args.job_label is not None:
         job_label_display = args.job_label
-    
+    elif args.test_type == 'gatling':
+        job_label_display = f"Gatling-{args.gatling_mode}-{args.duration}s"
+    else:
+        job_label_display = f"JMeter-{args.users}users-{args.duration}s-{args.rampup}s-rampup"
+
     print("=" * 70)
     print("🚀 HyperExecute Automation Script")
     if args.debug:
@@ -581,12 +751,23 @@ Examples:
     print(f"Configuration:")
     print(f"  - Username: {username}")
     print(f"  - Project ID: {project_id}")
-    print(f"  - Users: {args.users}")
-    print(f"  - Duration: {args.duration}s")
-    print(f"  - Ramp-up: {args.rampup}s")
+    print(f"  - Test Type: {args.test_type}")
+    if args.test_type == 'gatling':
+        print(f"  - Gatling Mode: {args.gatling_mode}")
+        if args.gatling_mode == 'capacity':
+            print(f"  - Initial Users: {args.initial_users}")
+            print(f"  - Final Users: {args.final_users}")
+        else:
+            print(f"  - Users: {args.users}")
+        print(f"  - Duration: {args.duration}s")
+        print(f"  - Gatling Path: {gatling_path}")
+    else:
+        print(f"  - Users: {args.users}")
+        print(f"  - Duration: {args.duration}s")
+        print(f"  - Ramp-up: {args.rampup}s")
+        print(f"  - JMX Path: {jmx_path}")
     print(f"  - Concurrency: {args.concurrency}")
     print(f"  - Job Label: {job_label_display}")
-    print(f"  - JMX Path: {jmx_path}")
     print(f"  - Runtime: {runtime_language}:{runtime_version}")
     if args.region:
         print(f"  - Region: {args.region}")
@@ -600,34 +781,65 @@ Examples:
     # Initialize API client
     api = HyperExecuteAPI(username, api_key, project_id)
 
-    # Step 0 (optional): Upload a local .jmx file to the project before triggering
-    if args.upload_jmx:
-        upload_success, uploaded_path = api.upload_file(args.upload_jmx)
-        if not upload_success:
-            print("\n❌ Failed to upload JMX file. Exiting.")
-            if args.debug:
-                print("🐛 Debug Info: Check the response body above for API errors")
-            sys.exit(1)
-        if uploaded_path:
-            jmx_path = uploaded_path
-            print(f" Using uploaded JMX path: {jmx_path}")
-        else:
-            print(f" Upload succeeded (200 OK); continuing with JMX path: {jmx_path}")
+    if args.test_type == 'gatling':
+        # Step 0 (optional): Upload a local Gatling file/project to the project before triggering
+        if args.upload_gatling:
+            upload_success, uploaded_path = api.upload_file(args.upload_gatling)
+            if not upload_success:
+                print("\n❌ Failed to upload Gatling file. Exiting.")
+                if args.debug:
+                    print("🐛 Debug Info: Check the response body above for API errors")
+                sys.exit(1)
+            if uploaded_path:
+                gatling_path = uploaded_path
+                print(f" Using uploaded Gatling path: {gatling_path}")
+            else:
+                print(f" Upload succeeded (200 OK); continuing with Gatling path: {gatling_path}")
 
-    # Step 1: Trigger the job
-    job_id = api.trigger_job(
-        users=args.users,
-        duration=args.duration,
-        rampup=args.rampup,
-        concurrency=args.concurrency,
-        job_label=args.job_label,
-        jmx_path=jmx_path,
-        runtime_language=runtime_language,
-        runtime_version=runtime_version,
-        region=args.region,
-        global_timeout=args.global_timeout
-    )
-    
+        # Step 1: Trigger the job
+        job_id = api.trigger_gatling_job(
+            gatling_mode=args.gatling_mode,
+            duration=args.duration,
+            users=args.users,
+            initial_users=args.initial_users,
+            final_users=args.final_users,
+            concurrency=args.concurrency,
+            job_label=args.job_label,
+            filepath=gatling_path,
+            runtime_language=runtime_language,
+            runtime_version=runtime_version,
+            region=args.region,
+            global_timeout=args.global_timeout
+        )
+    else:
+        # Step 0 (optional): Upload a local .jmx file to the project before triggering
+        if args.upload_jmx:
+            upload_success, uploaded_path = api.upload_file(args.upload_jmx)
+            if not upload_success:
+                print("\n❌ Failed to upload JMX file. Exiting.")
+                if args.debug:
+                    print("🐛 Debug Info: Check the response body above for API errors")
+                sys.exit(1)
+            if uploaded_path:
+                jmx_path = uploaded_path
+                print(f" Using uploaded JMX path: {jmx_path}")
+            else:
+                print(f" Upload succeeded (200 OK); continuing with JMX path: {jmx_path}")
+
+        # Step 1: Trigger the job
+        job_id = api.trigger_job(
+            users=args.users,
+            duration=args.duration,
+            rampup=args.rampup,
+            concurrency=args.concurrency,
+            job_label=args.job_label,
+            jmx_path=jmx_path,
+            runtime_language=runtime_language,
+            runtime_version=runtime_version,
+            region=args.region,
+            global_timeout=args.global_timeout
+        )
+
     if not job_id:
         print("\n❌ Failed to trigger job. Exiting.")
         if args.debug:
@@ -667,7 +879,7 @@ Examples:
     else:
         download_success = api.download_artifact(
             job_id=job_id,
-            artifact_name="JMeter",
+            artifact_name="Gatling" if args.test_type == 'gatling' else "JMeter",
             output_filename=args.output
         )
         
