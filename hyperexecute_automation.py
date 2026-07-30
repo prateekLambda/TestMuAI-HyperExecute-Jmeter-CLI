@@ -158,7 +158,8 @@ class HyperExecuteAPI:
                    jmx_path: str = "hyperexecute-jmeter-/test.jmx",
                    runtime_language: str = "java", runtime_version: str = "11",
                    region: Optional[str] = None,
-                   global_timeout: Optional[int] = None) -> Optional[str]:
+                   global_timeout: Optional[int] = None,
+                   variables: Optional[Dict[str, str]] = None) -> Optional[str]:
         """
         Trigger a new JMeter job
 
@@ -174,6 +175,8 @@ class HyperExecuteAPI:
             runtime_version: Version of the execution runtime (default: 11)
             region: Optional HyperExecute region to run the job in (e.g. eastus)
             global_timeout: Optional overall job timeout in minutes
+            variables: Optional JMeter property overrides (e.g. {"threads": "100"}),
+                passed through to the JMX as -J<key>=<value>
 
         Returns:
             Job ID if successful, None otherwise
@@ -214,6 +217,8 @@ class HyperExecuteAPI:
         }
         if region:
             jmeter_config["region"] = region
+        if variables:
+            jmeter_config["variables"] = variables
 
         payload = {
             "jmeter": [jmeter_config],
@@ -679,6 +684,9 @@ Examples:
                             'preserving folder structure - e.g. for .jmx + CSV data files), to '
                             'upload to the HyperExecute project before triggering the job '
                             '(e.g. --upload-jmx ./test.jmx or --upload-jmx ./test-plan/)')
+    parser.add_argument('--variable', action='append', default=[], metavar='KEY=VALUE',
+                       help='JMeter property override, passed through to the JMX as -J<key>=<value> '
+                            '(JMeter only). Repeatable: --variable threads=100 --variable rampup=1')
     parser.add_argument('--gatling-path', type=str, default='BasicSimulation.java',
                        help='Path to the Gatling simulation file relative to the HyperExecute '
                             'project workspace (default: BasicSimulation.java). Ignored if '
@@ -735,6 +743,15 @@ Examples:
         sys.exit(1)
     runtime_language, runtime_version = args.runtime.split(':', 1)
 
+    # Parse --variable KEY=VALUE entries into a dict
+    variables = {}
+    for entry in args.variable:
+        if '=' not in entry:
+            print(f"❌ Error: --variable must be in KEY=VALUE format, got '{entry}'")
+            sys.exit(1)
+        key, value = entry.split('=', 1)
+        variables[key] = value
+
     # Generate job label for display (will be used in the trigger call if not provided)
     if args.job_label is not None:
         job_label_display = args.job_label
@@ -766,6 +783,8 @@ Examples:
         print(f"  - Duration: {args.duration}s")
         print(f"  - Ramp-up: {args.rampup}s")
         print(f"  - JMX Path: {jmx_path}")
+        if variables:
+            print(f"  - Variables: {variables}")
     print(f"  - Concurrency: {args.concurrency}")
     print(f"  - Job Label: {job_label_display}")
     print(f"  - Runtime: {runtime_language}:{runtime_version}")
@@ -837,7 +856,8 @@ Examples:
             runtime_language=runtime_language,
             runtime_version=runtime_version,
             region=args.region,
-            global_timeout=args.global_timeout
+            global_timeout=args.global_timeout,
+            variables=variables
         )
 
     if not job_id:

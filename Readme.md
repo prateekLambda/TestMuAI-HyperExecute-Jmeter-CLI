@@ -117,6 +117,18 @@ python3 hyperexecute_automation.py \
   --region eastus
 ```
 
+### Overriding JMeter properties with `--variable`
+
+Pass `--variable KEY=VALUE` (repeatable) to override JMeter properties inside the JMX at runtime (`-J<key>=<value>`) - useful for JMX files that read values like `${__P(threads,1)}`:
+
+```bash
+python hyperexecute_automation.py \
+  --jmx-path te22479.jmx \
+  --variable threads=100 \
+  --variable rampup=1 \
+  --variable duration=1
+```
+
 ## Step 7b: Running a Gatling test instead
 
 Pass `--test-type gatling` and one of the three `--gatling-mode` load profiles. Each mode reads different parameters:
@@ -173,6 +185,7 @@ Full option reference:
 | `--concurrency` | int | 1 | Job concurrency level |
 | `--jmx-path` | str | `hyperexecute-jmeter-/test.jmx` | Path to the `.jmx` file inside the project workspace (or `HYPEREXECUTE_JMX_PATH` env var) |
 | `--upload-jmx` | str | — | Local file or directory to upload before triggering the job |
+| `--variable` | str | — | JMeter property override as `KEY=VALUE`, passed to the JMX as `-J<key>=<value>` (JMeter only). Repeatable |
 | `--gatling-mode` | str | — | `stress`, `capacity`, or `soak` (required when `--test-type gatling`) |
 | `--initial-users` | int | — | Starting arrival rate/sec (Gatling `capacity` mode only) |
 | `--final-users` | int | — | Ending arrival rate/sec (Gatling `capacity` mode only) |
