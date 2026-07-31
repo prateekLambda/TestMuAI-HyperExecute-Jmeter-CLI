@@ -633,7 +633,10 @@ class HyperExecuteAPI:
 
         try:
             print(f"\n🛑 Requesting abort for job number {job_number}...")
-            response = requests.put(url, headers=self.headers, timeout=30)
+            # Kept short: called from a signal handler racing a CI runner's
+            # cancellation grace period (e.g. GitHub Actions force-kills the
+            # process a few seconds after SIGTERM), so we can't afford to block long.
+            response = requests.put(url, headers=self.headers, timeout=8)
             response.raise_for_status()
             print(f"✅ Abort request accepted for job number {job_number}.")
             return True

@@ -136,7 +136,11 @@ jobs:
           fi
 
           echo "Running: python hyperexecute_automation.py ${args[*]}"
-          python hyperexecute_automation.py "${args[@]}"
+          # exec replaces this shell with the python process, so a cancelled run's
+          # SIGINT/SIGTERM is delivered directly to python (and caught by
+          # --abort-on-cancel) instead of only hitting this bash script, which
+          # would otherwise leave python running unsignaled as an orphaned child.
+          exec python hyperexecute_automation.py "${args[@]}"
 
       - name: Upload results
         if: always() && inputs.no-download != true
