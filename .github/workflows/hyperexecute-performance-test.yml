@@ -50,6 +50,18 @@ on:
         description: 'Skip downloading the results zip artifact'
         type: boolean
         default: false
+      lt-username:
+        description: 'LambdaTest username (leave blank to use the LT_USERNAME repo secret instead). WARNING: typed here, this value is NOT masked and will be visible in the run''s "Re-run workflow" inputs to anyone with read access to this repo.'
+        type: string
+        default: ''
+      lt-access-key:
+        description: 'LambdaTest API/access key (leave blank to use the LT_ACCESS_KEY repo secret instead). WARNING: typed here, this value is NOT masked and will be visible in the run''s "Re-run workflow" inputs to anyone with read access to this repo. Prefer the repo secret unless this repo is private and you accept that exposure.'
+        type: string
+        default: ''
+      project-id:
+        description: 'HyperExecute project ID (leave blank to use the HYPEREXECUTE_PROJECT_ID repo secret instead)'
+        type: string
+        default: ''
 
 # Cancelling an in-progress run (or starting a new one on the same ref) sends the
 # runner process a cancellation signal; --abort-on-cancel below makes the script
@@ -78,11 +90,24 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Mask manually-entered credentials in logs
+        run: |
+          if [ -n "${{ inputs.lt-access-key }}" ]; then
+            echo "::add-mask::${{ inputs.lt-access-key }}"
+          fi
+          if [ -n "${{ inputs.lt-username }}" ]; then
+            echo "::add-mask::${{ inputs.lt-username }}"
+          fi
+
       - name: Run HyperExecute ${{ inputs.test-type }} job
         env:
-          LT_USERNAME: ${{ secrets.LT_USERNAME }}
-          LT_ACCESS_KEY: ${{ secrets.LT_ACCESS_KEY }}
-          HYPEREXECUTE_PROJECT_ID: ${{ secrets.HYPEREXECUTE_PROJECT_ID }}
+          # Falls back to the repo secret when the corresponding input is left blank.
+          # NOTE: values typed into the dispatch form are NOT masked in the "Re-run
+          # workflow" inputs summary (only in step logs, via the masking step above) -
+          # prefer configuring the repo secrets unless this repo is private.
+          LT_USERNAME: ${{ inputs.lt-username || secrets.LT_USERNAME }}
+          LT_ACCESS_KEY: ${{ inputs.lt-access-key || secrets.LT_ACCESS_KEY }}
+          HYPEREXECUTE_PROJECT_ID: ${{ inputs.project-id || secrets.HYPEREXECUTE_PROJECT_ID }}
         run: |
           set -e
           args=(--test-type "${{ inputs.test-type }}" --duration "${{ inputs.duration }}" --abort-on-cancel --debug)
