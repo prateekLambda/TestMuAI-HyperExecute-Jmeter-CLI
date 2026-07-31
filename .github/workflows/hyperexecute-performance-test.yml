@@ -1,0 +1,124 @@
+name: HyperExecute Performance Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-type:
+        description: 'Test type'
+        type: choice
+        options:
+          - jmeter
+          - gatling
+        default: jmeter
+      users:
+        description: 'JMeter: users | Gatling stress: total injected users | Gatling soak: arrival rate/sec (ignored for Gatling capacity mode)'
+        type: string
+        default: '100'
+      duration:
+        description: 'Test duration in seconds'
+        type: string
+        default: '120'
+      rampup:
+        description: 'Ramp-up period in seconds (JMeter only)'
+        type: string
+        default: '60'
+      gatling-mode:
+        description: 'Gatling load profile (ignored for JMeter)'
+        type: choice
+        options:
+          - stress
+          - capacity
+          - soak
+        default: stress
+      initial-users:
+        description: 'Gatling capacity mode: starting arrival rate/sec (ignored otherwise)'
+        type: string
+        default: ''
+      final-users:
+        description: 'Gatling capacity mode: ending arrival rate/sec (ignored otherwise)'
+        type: string
+        default: ''
+      region:
+        description: 'HyperExecute region, e.g. eastus (leave blank for project default)'
+        type: string
+        default: ''
+      global-timeout:
+        description: 'Overall job timeout in minutes (leave blank for platform default)'
+        type: string
+        default: ''
+      no-download:
+        description: 'Skip downloading the results zip artifact'
+        type: boolean
+        default: false
+
+# Cancelling an in-progress run (or starting a new one on the same ref) sends the
+# runner process a cancellation signal; --abort-on-cancel below makes the script
+# catch that and abort the HyperExecute-side job instead of leaving it orphaned.
+concurrency:
+  group: hyperexecute-performance-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  run-performance-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run HyperExecute ${{ inputs.test-type }} job
+        env:
+          LT_USERNAME: ${{ secrets.LT_USERNAME }}
+          LT_ACCESS_KEY: ${{ secrets.LT_ACCESS_KEY }}
+          HYPEREXECUTE_PROJECT_ID: ${{ secrets.HYPEREXECUTE_PROJECT_ID }}
+        run: |
+          set -e
+          args=(--test-type "${{ inputs.test-type }}" --duration "${{ inputs.duration }}" --abort-on-cancel --debug)
+
+          if [ "${{ inputs.test-type }}" = "gatling" ]; then
+            args+=(--gatling-mode "${{ inputs.gatling-mode }}")
+            if [ "${{ inputs.gatling-mode }}" = "capacity" ]; then
+              args+=(--initial-users "${{ inputs.initial-users }}" --final-users "${{ inputs.final-users }}")
+            else
+              args+=(--users "${{ inputs.users }}")
+            fi
+          else
+            args+=(--users "${{ inputs.users }}" --rampup "${{ inputs.rampup }}")
+          fi
+
+          if [ -n "${{ inputs.region }}" ]; then
+            args+=(--region "${{ inputs.region }}")
+          fi
+
+          if [ -n "${{ inputs.global-timeout }}" ]; then
+            args+=(--global-timeout "${{ inputs.global-timeout }}")
+          fi
+
+          if [ "${{ inputs.no-download }}" = "true" ]; then
+            args+=(--no-download)
+          fi
+
+          echo "Running: python hyperexecute_automation.py ${args[*]}"
+          python hyperexecute_automation.py "${args[@]}"
+
+      - name: Upload results
+        if: always() && inputs.no-download != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperexecute-${{ inputs.test-type }}-results-${{ github.run_id }}
+          path: |
+            *_JMeter.zip
+            *_Gatling.zip
+          if-no-files-found: ignore
