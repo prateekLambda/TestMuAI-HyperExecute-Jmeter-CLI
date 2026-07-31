@@ -18,6 +18,10 @@ import mimetypes
 from typing import Dict, Any, Optional, Tuple
 import argparse
 
+# Platform's own default job timeout (minutes) when --global-timeout isn't set,
+# used to size the script's job-status polling ceiling (see main()).
+DEFAULT_GLOBAL_TIMEOUT_MINUTES = 90
+
 
 class HyperExecuteAPI:
     """Class to handle HyperExecute API operations"""
@@ -867,9 +871,17 @@ Examples:
         sys.exit(1)
     
     # Step 2: Monitor job status
+    # The script's own polling ceiling is independent of --global-timeout (which the
+    # platform enforces server-side) - poll 15 minutes past whatever globalTimeout was
+    # requested (or the platform's own 90-minute default, if none was given) so the
+    # script doesn't give up watching before the platform would have force-stopped the
+    # job itself.
+    effective_global_timeout = args.global_timeout if args.global_timeout is not None else DEFAULT_GLOBAL_TIMEOUT_MINUTES
+    job_max_wait = (effective_global_timeout + 15) * 60
     job_completed = api.check_job_status(
         job_id=job_id,
-        poll_interval=args.job_poll_interval
+        poll_interval=args.job_poll_interval,
+        max_wait_time=job_max_wait
     )
     
     if not job_completed:

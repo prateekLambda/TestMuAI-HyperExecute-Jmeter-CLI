@@ -194,7 +194,7 @@ Full option reference:
 | `--job-label` | str | auto-generated | Custom label shown on the HyperExecute dashboard |
 | `--runtime` | str | `java:11` | Execution runtime as `language:version` |
 | `--region` | str | platform/project default | HyperExecute region to run the job in (e.g. `eastus`) |
-| `--global-timeout` | int | platform default | Overall job timeout in minutes |
+| `--global-timeout` | int | platform default (90m) | Overall job timeout in minutes. The script polls job status for this value plus 15 minutes before giving up client-side (see Troubleshooting) |
 
 ### Execution behavior
 
@@ -413,6 +413,9 @@ The script combines username and API key into a Basic Auth token automatically. 
 
 **Job never completes**
 Check the HyperExecute dashboard for the job ID printed in the output. Increase `--job-poll-interval` if you suspect API rate limiting, and confirm the JMeter test plan itself runs correctly outside of this script.
+
+**Script exits with "Job did not complete successfully" but the job is still running on the dashboard**
+This is a client-side polling timeout, not a job failure. The script only watches a job for `--global-timeout` plus 15 minutes (90m + 15m = 105m if `--global-timeout` isn't set) before giving up and exiting - it does not cancel the job, which keeps running on HyperExecute regardless. If your test genuinely needs longer than that to finish (long `--duration`, slow VM provisioning, etc.), pass a larger `--global-timeout` so the script's polling window scales with it.
 
 **Download fails after a successful job**
 Artifacts may still be processing — the script already waits for `completed` status, but very large reports can take longer than the default artifact timeout. Also check the artifact hasn't expired.
