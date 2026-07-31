@@ -164,6 +164,67 @@ python hyperexecute_automation.py \
 
 If the upload returns a remote path, the script uses it automatically and `--gatling-path` is ignored - same behavior as `--upload-jmx`/`--jmx-path`.
 
+## Sample commands
+
+Quick-reference commands covering common argument combinations for both test types. All assume credentials are already set via environment variables (Step 4, Option A) unless shown otherwise.
+
+### JMeter
+
+```bash
+# 1. Quick smoke test - just override the load profile, everything else defaults
+python hyperexecute_automation.py --users 50 --duration 60 --rampup 20
+
+# 2. Upload a local JMX + CSV data folder, override JMeter properties read via __P(), pick a region
+python hyperexecute_automation.py \
+  --upload-jmx ./test-plan/ \
+  --variable threads=100 \
+  --variable rampup=30 \
+  --region eastus \
+  --job-label "checkout-api-load"
+
+# 3. CI-friendly run: explicit credentials, no zip download, verbose logs, auto-abort if the CI job is cancelled
+python hyperexecute_automation.py \
+  --username your_username \
+  --api-key your_api_key \
+  --project-id your_project_id \
+  --users 300 \
+  --duration 250 \
+  --rampup 60 \
+  --global-timeout 45 \
+  --no-download \
+  --debug \
+  --abort-on-cancel
+```
+
+### Gatling
+
+```bash
+# 1. Stress: ramp to 10 total injected users over 120s, uploading the simulation project
+python hyperexecute_automation.py \
+  --test-type gatling --gatling-mode stress \
+  --users 10 --duration 120 \
+  --upload-gatling ./gatling-project/ \
+  --gatling-path gatling-project/src/test/java/example/BasicSimulation.java
+
+# 2. Capacity: ramp arrival rate from 1/s to 10/s over 120s, custom region + job label
+python hyperexecute_automation.py \
+  --test-type gatling --gatling-mode capacity \
+  --initial-users 1 --final-users 10 --duration 120 \
+  --upload-gatling ./gatling-project/ \
+  --region eastus \
+  --job-label "gatling-capacity-nightly"
+
+# 3. Soak: constant 5/s arrival rate for 10 minutes, CI-friendly with auto-abort on cancel
+python hyperexecute_automation.py \
+  --test-type gatling --gatling-mode soak \
+  --users 5 --duration 600 \
+  --upload-gatling ./gatling-project/ \
+  --global-timeout 30 \
+  --no-download \
+  --debug \
+  --abort-on-cancel
+```
+
 Full option reference:
 
 ### Required (if not set via environment variables)
@@ -260,6 +321,7 @@ The script is designed to drop straight into a pipeline:
 - **Exit codes**: `0` on success, `1` on failure at any stage — no extra handling needed beyond checking the process exit status.
 - **`--no-download`**: skips the zip download when you only need pass/fail + the job ID (e.g. results are already visible on the HyperExecute dashboard).
 - **`--debug`**: prints request/response detail so failures are diagnosable from build logs alone.
+- **`--abort-on-cancel`**: on SIGINT/SIGTERM (e.g. the CI job/pipeline itself is cancelled), attempts to abort the in-progress HyperExecute job via the platform API before the process exits, instead of leaving it running orphaned on the dashboard. Opt-in (default off). Limitation: the job's numeric `jobNumber` must already be known, which happens after the first successful status poll — if the signal arrives before then (e.g. still uploading a file or the trigger call hasn't returned), there's nothing to abort yet and the script prints a warning telling you to cancel manually from the dashboard.
 - **Secrets**: store `LT_USERNAME`, `LT_ACCESS_KEY`, and `HYPEREXECUTE_PROJECT_ID` as CI secrets/variables and export them as environment variables — never hardcode them in pipeline files.
 
 ```bash
@@ -267,7 +329,8 @@ python hyperexecute_automation.py \
   --users 100 \
   --duration 120 \
   --no-download \
-  --debug
+  --debug \
+  --abort-on-cancel
 ```
 
 ### GitHub Actions
@@ -416,6 +479,9 @@ Check the HyperExecute dashboard for the job ID printed in the output. Increase 
 
 **Script exits with "Job did not complete successfully" but the job is still running on the dashboard**
 This is a client-side polling timeout, not a job failure. The script only watches a job for `--global-timeout` plus 15 minutes (90m + 15m = 105m if `--global-timeout` isn't set) before giving up and exiting - it does not cancel the job, which keeps running on HyperExecute regardless. If your test genuinely needs longer than that to finish (long `--duration`, slow VM provisioning, etc.), pass a larger `--global-timeout` so the script's polling window scales with it.
+
+**CI pipeline is cancelled but the HyperExecute job keeps running (orphaned)**
+When a CI system kills this script's process (pipeline cancelled, job timed out, manually stopped in the CI UI), the script has no chance to clean up on its own, and the corresponding HyperExecute job is left running unattended. Pass `--abort-on-cancel` to have the script catch SIGINT/SIGTERM and call HyperExecute's abort API before exiting. Note this only works once the job's `jobNumber` is known (after the first status poll) - a cancellation that happens during file upload or immediately after triggering, before any status poll has completed, can't be auto-aborted and will need to be stopped manually from the dashboard.
 
 **Download fails after a successful job**
 Artifacts may still be processing — the script already waits for `completed` status, but very large reports can take longer than the default artifact timeout. Also check the artifact hasn't expired.

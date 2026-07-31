@@ -13,6 +13,7 @@ import time
 import json
 import sys
 import os
+import signal
 import base64
 import mimetypes
 from typing import Dict, Any, Optional, Tuple
@@ -50,7 +51,11 @@ class HyperExecuteAPI:
             'Authorization': f'Basic {self.auth_token}',
             'content-type': 'application/json'
         }
-        
+
+        # Populated once a job's numeric jobNumber becomes known (see check_job_status);
+        # used by abort_job() when --abort-on-cancel triggers on a CI cancellation signal.
+        self.job_number: Optional[Any] = None
+
         print(f" Initialized API client for user: {username}")
         print(f" Generated Basic Auth token: {self.auth_token[:20]}...")
 
@@ -442,6 +447,8 @@ class HyperExecuteAPI:
                 
                 result = response.json()
                 data = result.get('data', {})
+                if data.get('jobNumber') is not None:
+                    self.job_number = data.get('jobNumber')
                 status = data.get('status')
                 
                 elapsed_time = int(time.time() - start_time)
@@ -611,6 +618,31 @@ class HyperExecuteAPI:
                 print(f"Response: {e.response.text}")
             return False
 
+    def abort_job(self, job_number: Any) -> bool:
+        """
+        Abort an in-progress HyperExecute job by its numeric jobNumber.
+
+        Args:
+            job_number: The numeric jobNumber (not the job_id UUID) obtained from
+                a prior check_job_status() poll (self.job_number).
+
+        Returns:
+            True if the abort request was accepted, False otherwise.
+        """
+        url = f"{self.base_url_status}/v1.0/job/{job_number}/abort"
+
+        try:
+            print(f"\n🛑 Requesting abort for job number {job_number}...")
+            response = requests.put(url, headers=self.headers, timeout=30)
+            response.raise_for_status()
+            print(f"✅ Abort request accepted for job number {job_number}.")
+            return True
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error aborting job {job_number}: {e}")
+            if hasattr(e, 'response') and e.response is not None and hasattr(e.response, 'text'):
+                print(f"Response: {e.response.text}")
+            return False
+
 
 def main():
     """Main function to run the automation workflow"""
@@ -712,7 +744,12 @@ Examples:
                        help='Enable debug mode with verbose output for CI/CD troubleshooting')
     parser.add_argument('--no-download', action='store_true',
                        help='Skip artifact download (useful for CI/CD where you just need job completion)')
-    
+    parser.add_argument('--abort-on-cancel', action='store_true',
+                       help='If the script receives SIGINT/SIGTERM (e.g. the CI job is cancelled), '
+                            'attempt to abort the in-progress HyperExecute job via the platform API '
+                            'before exiting, instead of leaving it running orphaned. Opt-in, default off. '
+                            'No effect if triggered before the first status poll (jobNumber not yet known).')
+
     args = parser.parse_args()
     
     # Get credentials from arguments or environment variables
@@ -799,10 +836,31 @@ Examples:
     if args.debug:
         print(f"  - Debug Mode: ON")
         print(f"  - Skip Download: {args.no_download}")
+        print(f"  - Abort on Cancel: {args.abort_on_cancel}")
     print("=" * 70 + "\n")
-    
+
     # Initialize API client
     api = HyperExecuteAPI(username, api_key, project_id)
+
+    if args.abort_on_cancel:
+        abort_state = {'in_progress': False}
+
+        def _handle_cancel_signal(signum, frame):
+            if abort_state['in_progress']:
+                return
+            abort_state['in_progress'] = True
+            sig_name = signal.Signals(signum).name
+            print(f"\n🛑 Received {sig_name}. Attempting to abort HyperExecute job before exiting...", flush=True)
+            if api.job_number is None:
+                print("⚠️  No jobNumber known yet - cannot auto-abort. "
+                      "Cancel manually from the HyperExecute dashboard if a job was triggered.", flush=True)
+            else:
+                api.abort_job(api.job_number)
+            sys.stdout.flush()
+            sys.exit(128 + signum)
+
+        signal.signal(signal.SIGINT, _handle_cancel_signal)
+        signal.signal(signal.SIGTERM, _handle_cancel_signal)
 
     if args.test_type == 'gatling':
         # Step 0 (optional): Upload a local Gatling file/project to the project before triggering
