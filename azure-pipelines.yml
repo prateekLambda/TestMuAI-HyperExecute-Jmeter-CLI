@@ -1,0 +1,141 @@
+# HyperExecute Performance Test
+#
+# Manual-only pipeline (no CI/PR triggers) - mirrors
+# .github/workflows/hyperexecute-performance-test.yml.
+#
+# Secrets (LT_USERNAME, LT_ACCESS_KEY, HYPEREXECUTE_PROJECT_ID) must be defined
+# as secret variables in this pipeline (Edit -> Variables) or in a linked
+# variable group, and marked "keep this value secret" so they get masked in logs.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: testType
+    displayName: 'Test type'
+    type: string
+    default: jmeter
+    values:
+      - jmeter
+      - gatling
+
+  - name: users
+    displayName: 'JMeter: users | Gatling stress: total injected users | Gatling soak: arrival rate/sec (ignored for Gatling capacity mode)'
+    type: string
+    default: '100'
+
+  - name: duration
+    displayName: 'Test duration in seconds'
+    type: string
+    default: '120'
+
+  - name: rampup
+    displayName: 'Ramp-up period in seconds (JMeter only)'
+    type: string
+    default: '60'
+
+  - name: gatlingMode
+    displayName: 'Gatling load profile (ignored for JMeter)'
+    type: string
+    default: stress
+    values:
+      - stress
+      - capacity
+      - soak
+
+  - name: initialUsers
+    displayName: 'Gatling capacity mode: starting arrival rate/sec (ignored otherwise)'
+    type: string
+    default: ''
+
+  - name: finalUsers
+    displayName: 'Gatling capacity mode: ending arrival rate/sec (ignored otherwise)'
+    type: string
+    default: ''
+
+  - name: region
+    displayName: 'HyperExecute region, e.g. eastus (leave blank for project default)'
+    type: string
+    default: ''
+
+  - name: globalTimeout
+    displayName: 'Overall job timeout in minutes (leave blank for platform default)'
+    type: string
+    default: ''
+
+  - name: noDownload
+    displayName: 'Skip downloading the results zip artifact'
+    type: boolean
+    default: false
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: hyperexecute-secrets # must define LT_USERNAME, LT_ACCESS_KEY, HYPEREXECUTE_PROJECT_ID as secret variables
+
+jobs:
+  - job: run_performance_test
+    displayName: 'Run HyperExecute ${{ parameters.testType }} job'
+    timeoutInMinutes: 90
+
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.x'
+        displayName: 'Set up Python'
+
+      - script: pip install -r requirements.txt
+        displayName: 'Install dependencies'
+
+      - script: |
+          set -e
+
+          args=(--test-type "${{ parameters.testType }}" --duration "${{ parameters.duration }}" --abort-on-cancel --debug)
+
+          if [ "${{ parameters.testType }}" = "gatling" ]; then
+            args+=(--gatling-mode "${{ parameters.gatlingMode }}")
+            if [ "${{ parameters.gatlingMode }}" = "capacity" ]; then
+              args+=(--initial-users "${{ parameters.initialUsers }}" --final-users "${{ parameters.finalUsers }}")
+            else
+              args+=(--users "${{ parameters.users }}")
+            fi
+          else
+            args+=(--users "${{ parameters.users }}" --rampup "${{ parameters.rampup }}")
+          fi
+
+          if [ -n "${{ parameters.region }}" ]; then
+            args+=(--region "${{ parameters.region }}")
+          fi
+
+          if [ -n "${{ parameters.globalTimeout }}" ]; then
+            args+=(--global-timeout "${{ parameters.globalTimeout }}")
+          fi
+
+          if [ "${{ parameters.noDownload }}" = "True" ]; then
+            args+=(--no-download)
+          fi
+
+          echo "Running: python hyperexecute_automation.py ${args[*]}"
+          # exec replaces this shell with the python process, so a cancelled run's
+          # signal is delivered directly to python (and caught by --abort-on-cancel)
+          # instead of only hitting this bash script, which would otherwise leave
+          # python running unsignaled as an orphaned child.
+          exec python hyperexecute_automation.py "${args[@]}"
+        displayName: 'Run HyperExecute ${{ parameters.testType }} job'
+        env:
+          LT_USERNAME: $(LT_USERNAME)
+          LT_ACCESS_KEY: $(LT_ACCESS_KEY)
+          HYPEREXECUTE_PROJECT_ID: $(HYPEREXECUTE_PROJECT_ID)
+
+      - task: PublishPipelineArtifact@1
+        condition: and(always(), eq('${{ parameters.noDownload }}', 'False'))
+        displayName: 'Upload results'
+        inputs:
+          targetPath: '$(System.DefaultWorkingDirectory)'
+          artifactName: 'hyperexecute-${{ parameters.testType }}-results-$(Build.BuildId)'
+          # Note: PublishPipelineArtifact@1 publishes the whole targetPath; unlike
+          # actions/upload-artifact it has no built-in glob filter, so any other
+          # files in $(System.DefaultWorkingDirectory) are included too. Narrow
+          # targetPath to a results subfolder if the script writes elsewhere or if
+          # you want to publish only the *_JMeter.zip / *_Gatling.zip files.
