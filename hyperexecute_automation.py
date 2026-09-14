@@ -770,6 +770,70 @@ def assert_jmeter_results(stats: Dict[str, Any], max_error_pct: float,
     return all_passed
 
 
+def check_jmeter_log_errors(zip_path: str) -> list:
+    """
+    Scan jmeter.log inside the results zip for "JMeterThread: Test failed!"
+    entries. These are thrown by config-element lifecycle hooks (e.g. a
+    WebDriver Config's browser quit/create on iterationStart) rather than by
+    a Sampler, so they never produce a SampleResult and are invisible to
+    statistics.json / the HTML dashboard. Returns a list of short exception
+    summaries, one per failure found (empty if none or if jmeter.log is
+    missing/unreadable).
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            log_entry = next((n for n in zf.namelist() if n.endswith('jmeter.log')), None)
+            if not log_entry:
+                return []
+            with zf.open(log_entry) as f:
+                content = f.read().decode('utf-8', errors='replace')
+    except (zipfile.BadZipFile, OSError) as e:
+        print(f"\n⚠️  Could not read jmeter.log from {zip_path}: {e}")
+        return []
+
+    failures = []
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if 'JMeterThread: Test failed!' in line:
+            exception_line = next((l.strip() for l in lines[i + 1:i + 3] if l.strip()), 'Unknown exception')
+            failures.append(exception_line)
+    return failures
+
+
+def assert_no_jmeter_log_errors(zip_path: str) -> bool:
+    """
+    Fail if jmeter.log (inside the results zip) contains any "Test failed!"
+    entries. These bypass statistics.json entirely (see
+    check_jmeter_log_errors), so this catches failures the error-rate/
+    response-time assertions above cannot see. Prints a pass/fail verdict
+    and raises a CI error annotation on failure. Returns True if it passed.
+    """
+    failures = check_jmeter_log_errors(zip_path)
+
+    print("\n" + "=" * 70)
+    print("🔎 Assertion: JMeter engine log errors")
+    print("=" * 70)
+
+    if failures:
+        message = (f"JMeter assertion failed: {len(failures)} 'Test failed!' entr"
+                    f"{'y' if len(failures) == 1 else 'ies'} found in jmeter.log "
+                    f"(not reflected in statistics.json)")
+        print(f"❌ FAILED: {message}")
+        for exc in failures[:10]:
+            print(f"   - {exc}")
+        if len(failures) > 10:
+            print(f"   ... and {len(failures) - 10} more")
+        _raise_ci_error(message)
+        print("=" * 70)
+        return False
+
+    print("✅ PASSED: no 'Test failed!' entries found in jmeter.log")
+    print("=" * 70)
+    return True
+
+
 def main():
     """Main function to run the automation workflow"""
     
@@ -1138,9 +1202,12 @@ Examples:
                 print("\n⚠️  --fail-on-error is JMeter only; ignoring for --test-type gatling.")
             elif stats is None:
                 print("\n⚠️  --fail-on-error set but results summary could not be loaded; skipping assertion.")
-            elif not assert_jmeter_results(stats, args.max_error_pct,
-                                            args.max_avg_response_time, args.max_response_time):
-                sys.exit(1)
+            else:
+                results_ok = assert_jmeter_results(stats, args.max_error_pct,
+                                                     args.max_avg_response_time, args.max_response_time)
+                log_ok = assert_no_jmeter_log_errors(output_filename)
+                if not results_ok or not log_ok:
+                    sys.exit(1)
 
     print("\n" + "=" * 70)
     print("🎉 Workflow completed successfully!")

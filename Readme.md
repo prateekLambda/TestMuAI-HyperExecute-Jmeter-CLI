@@ -267,7 +267,7 @@ Full option reference:
 | `--no-download` | flag | off | Skip downloading artifacts (useful in CI/CD) |
 | `--debug` | flag | off | Verbose output for troubleshooting |
 | `--print-summary` | flag | off | After downloading, parse `statistics.json` (JMeter) / `js/global_stats.json` (Gatling) and print a results summary table to stdout (so it shows up in CI console logs) |
-| `--fail-on-error` | flag | off | JMeter only: after downloading, assert the `Total` row's error % and (if set) response-time thresholds; exit non-zero (failing the CI job) if any check fails |
+| `--fail-on-error` | flag | off | JMeter only: after downloading, assert the `Total` row's error % and (if set) response-time thresholds, and scan `jmeter.log` for "Test failed!" entries (config-element/WebDriver failures that never appear in `statistics.json`); exit non-zero (failing the CI job) if any check fails |
 | `--max-error-pct` | float | 0.0 | Max allowed JMeter error percentage for `--fail-on-error` (any error fails by default) |
 | `--max-avg-response-time` | float | — | Max allowed average response time in ms for `--fail-on-error`. Not checked if unset |
 | `--max-response-time` | float | — | Max allowed (worst-case) response time in ms for `--fail-on-error`. Not checked if unset |
