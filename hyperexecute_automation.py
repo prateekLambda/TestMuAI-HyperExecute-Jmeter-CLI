@@ -717,8 +717,15 @@ def assert_jmeter_error_rate(stats: Dict[str, Any], max_error_pct: float) -> boo
     print("🔎 Assertion: JMeter error rate")
     print("=" * 70)
     if error_pct > max_error_pct:
-        print(f"❌ FAILED: error rate {error_pct:.2f}% exceeds allowed max {max_error_pct:.2f}%")
-        print(f"   Samples: {total.get('sampleCount', 'N/A')}, Errors: {total.get('errorCount', 'N/A')}")
+        message = (f"JMeter assertion failed: error rate {error_pct:.2f}% exceeds allowed "
+                    f"max {max_error_pct:.2f}% (samples: {total.get('sampleCount', 'N/A')}, "
+                    f"errors: {total.get('errorCount', 'N/A')})")
+        print(f"❌ FAILED: {message}")
+        # Surface as a highlighted error in the pipeline UI, not just console text.
+        if os.environ.get('TF_BUILD') == 'True':
+            print(f"##vso[task.logissue type=error]{message}")
+        elif os.environ.get('GITHUB_ACTIONS') == 'true':
+            print(f"::error::{message}")
         print("=" * 70)
         return False
 
