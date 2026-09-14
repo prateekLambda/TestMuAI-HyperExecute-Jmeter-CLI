@@ -46,22 +46,22 @@ parameters:
   - name: initialUsers
     displayName: 'Gatling capacity mode: starting arrival rate/sec (ignored otherwise)'
     type: string
-    default: ''
+    default: 'none'
 
   - name: finalUsers
     displayName: 'Gatling capacity mode: ending arrival rate/sec (ignored otherwise)'
     type: string
-    default: ''
+    default: 'none'
 
   - name: region
-    displayName: 'HyperExecute region, e.g. eastus (leave blank for project default)'
+    displayName: 'HyperExecute region, e.g. eastus (leave blank/none for project default)'
     type: string
-    default: ''
+    default: 'none'
 
   - name: globalTimeout
-    displayName: 'Overall job timeout in minutes (leave blank for platform default)'
+    displayName: 'Overall job timeout in minutes (leave blank/none for platform default)'
     type: string
-    default: ''
+    default: 'none'
 
   - name: noDownload
     displayName: 'Skip downloading the results zip artifact'
@@ -104,11 +104,11 @@ jobs:
             args+=(--users "${{ parameters.users }}" --rampup "${{ parameters.rampup }}")
           fi
 
-          if [ -n "${{ parameters.region }}" ]; then
+          if [ -n "${{ parameters.region }}" ] && [ "${{ parameters.region }}" != "none" ]; then
             args+=(--region "${{ parameters.region }}")
           fi
 
-          if [ -n "${{ parameters.globalTimeout }}" ]; then
+          if [ -n "${{ parameters.globalTimeout }}" ] && [ "${{ parameters.globalTimeout }}" != "none" ]; then
             args+=(--global-timeout "${{ parameters.globalTimeout }}")
           fi
 
