@@ -120,7 +120,7 @@ jobs:
               args+=(--users "${{ inputs.users }}")
             fi
           else
-            args+=(--users "${{ inputs.users }}" --rampup "${{ inputs.rampup }}")
+            args+=(--users "${{ inputs.users }}" --rampup "${{ inputs.rampup }}" --upload-jmx "Ecommerce.jmx")
           fi
 
           if [ -n "${{ inputs.region }}" ]; then
