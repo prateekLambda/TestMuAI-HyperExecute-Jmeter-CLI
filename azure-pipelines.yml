@@ -71,6 +71,16 @@ parameters:
     type: boolean
     default: false
 
+  - name: maxAvgResponseTime
+    displayName: 'JMeter: fail if avg response time exceeds this many ms (leave/none to skip check)'
+    type: string
+    default: 'none'
+
+  - name: maxResponseTime
+    displayName: 'JMeter: fail if max response time exceeds this many ms (leave/none to skip check)'
+    type: string
+    default: 'none'
+
   - name: ltUsername
     displayName: 'LambdaTest username'
     type: string
@@ -123,6 +133,12 @@ jobs:
             fi
           else
             args+=(--users "${{ parameters.users }}" --rampup "${{ parameters.rampup }}" --upload-jmx "Ecommerce.jmx" --fail-on-error)
+            if [ -n "${{ parameters.maxAvgResponseTime }}" ] && [ "${{ parameters.maxAvgResponseTime }}" != "none" ]; then
+              args+=(--max-avg-response-time "${{ parameters.maxAvgResponseTime }}")
+            fi
+            if [ -n "${{ parameters.maxResponseTime }}" ] && [ "${{ parameters.maxResponseTime }}" != "none" ]; then
+              args+=(--max-response-time "${{ parameters.maxResponseTime }}")
+            fi
           fi
 
           if [ -n "${{ parameters.region }}" ] && [ "${{ parameters.region }}" != "none" ]; then

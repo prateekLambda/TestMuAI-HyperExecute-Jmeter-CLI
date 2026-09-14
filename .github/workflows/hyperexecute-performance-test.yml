@@ -50,6 +50,14 @@ on:
         description: 'Skip downloading the results zip artifact'
         type: boolean
         default: false
+      max-avg-response-time:
+        description: 'JMeter: fail if avg response time exceeds this many ms (leave blank to skip check)'
+        type: string
+        default: ''
+      max-response-time:
+        description: 'JMeter: fail if max response time exceeds this many ms (leave blank to skip check)'
+        type: string
+        default: ''
       lt-username:
         description: 'LambdaTest username (leave blank to use the LT_USERNAME repo secret instead). WARNING: typed here, this value is NOT masked and will be visible in the run''s "Re-run workflow" inputs to anyone with read access to this repo.'
         type: string
@@ -121,6 +129,12 @@ jobs:
             fi
           else
             args+=(--users "${{ inputs.users }}" --rampup "${{ inputs.rampup }}" --upload-jmx "Ecommerce.jmx" --fail-on-error)
+            if [ -n "${{ inputs.max-avg-response-time }}" ]; then
+              args+=(--max-avg-response-time "${{ inputs.max-avg-response-time }}")
+            fi
+            if [ -n "${{ inputs.max-response-time }}" ]; then
+              args+=(--max-response-time "${{ inputs.max-response-time }}")
+            fi
           fi
 
           if [ -n "${{ inputs.region }}" ]; then

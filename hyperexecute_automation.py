@@ -705,33 +705,69 @@ def print_test_summary(stats: Dict[str, Any], test_type: str) -> None:
     print("=" * 70)
 
 
-def assert_jmeter_error_rate(stats: Dict[str, Any], max_error_pct: float) -> bool:
+def _raise_ci_error(message: str) -> None:
+    """Emit a highlighted error annotation in the pipeline UI, if running in a known CI."""
+    if os.environ.get('TF_BUILD') == 'True':
+        print(f"##vso[task.logissue type=error]{message}")
+    elif os.environ.get('GITHUB_ACTIONS') == 'true':
+        print(f"::error::{message}")
+
+
+def assert_jmeter_results(stats: Dict[str, Any], max_error_pct: float,
+                           max_avg_response_time: Optional[float] = None,
+                           max_response_time: Optional[float] = None) -> bool:
     """
-    Fail the assertion if the JMeter "Total" row's error percentage exceeds
-    max_error_pct. Prints the pass/fail verdict. Returns True if it passed.
+    Check the JMeter "Total" row in statistics.json against one or more
+    thresholds: error percentage (always checked), and optionally mean/max
+    response time in milliseconds (checked only if the corresponding
+    threshold is not None). Prints a per-check pass/fail verdict. Returns
+    True only if every checked condition passed.
     """
     total = stats.get('Total', {})
     error_pct = total.get('errorPct', 0.0)
+    mean_res_time = total.get('meanResTime', 0.0)
+    max_res_time = total.get('maxResTime', 0.0)
 
     print("\n" + "=" * 70)
-    print("🔎 Assertion: JMeter error rate")
+    print("🔎 Assertions: JMeter results")
     print("=" * 70)
+
+    all_passed = True
+
     if error_pct > max_error_pct:
         message = (f"JMeter assertion failed: error rate {error_pct:.2f}% exceeds allowed "
                     f"max {max_error_pct:.2f}% (samples: {total.get('sampleCount', 'N/A')}, "
                     f"errors: {total.get('errorCount', 'N/A')})")
         print(f"❌ FAILED: {message}")
-        # Surface as a highlighted error in the pipeline UI, not just console text.
-        if os.environ.get('TF_BUILD') == 'True':
-            print(f"##vso[task.logissue type=error]{message}")
-        elif os.environ.get('GITHUB_ACTIONS') == 'true':
-            print(f"::error::{message}")
-        print("=" * 70)
-        return False
+        _raise_ci_error(message)
+        all_passed = False
+    else:
+        print(f"✅ PASSED: error rate {error_pct:.2f}% is within allowed max {max_error_pct:.2f}%")
 
-    print(f"✅ PASSED: error rate {error_pct:.2f}% is within allowed max {max_error_pct:.2f}%")
+    if max_avg_response_time is not None:
+        if mean_res_time > max_avg_response_time:
+            message = (f"JMeter assertion failed: avg response time {mean_res_time:.0f} ms exceeds "
+                        f"allowed max {max_avg_response_time:.0f} ms")
+            print(f"❌ FAILED: {message}")
+            _raise_ci_error(message)
+            all_passed = False
+        else:
+            print(f"✅ PASSED: avg response time {mean_res_time:.0f} ms is within allowed "
+                  f"max {max_avg_response_time:.0f} ms")
+
+    if max_response_time is not None:
+        if max_res_time > max_response_time:
+            message = (f"JMeter assertion failed: max response time {max_res_time:.0f} ms exceeds "
+                        f"allowed max {max_response_time:.0f} ms")
+            print(f"❌ FAILED: {message}")
+            _raise_ci_error(message)
+            all_passed = False
+        else:
+            print(f"✅ PASSED: max response time {max_res_time:.0f} ms is within allowed "
+                  f"max {max_response_time:.0f} ms")
+
     print("=" * 70)
-    return True
+    return all_passed
 
 
 def main():
@@ -847,6 +883,12 @@ Examples:
     parser.add_argument('--max-error-pct', type=float, default=0.0,
                        help='Maximum allowed JMeter error percentage for --fail-on-error (default: 0.0, '
                             'i.e. any error fails the assertion)')
+    parser.add_argument('--max-avg-response-time', type=float, default=None,
+                       help='JMeter only, requires --fail-on-error: maximum allowed average response '
+                            'time in ms for the "Total" row. Not checked if unset (default).')
+    parser.add_argument('--max-response-time', type=float, default=None,
+                       help='JMeter only, requires --fail-on-error: maximum allowed (worst-case) response '
+                            'time in ms for the "Total" row. Not checked if unset (default).')
     parser.add_argument('--abort-on-cancel', action='store_true',
                        help='If the script receives SIGINT/SIGTERM (e.g. the CI job is cancelled), '
                             'attempt to abort the in-progress HyperExecute job via the platform API '
@@ -1096,7 +1138,8 @@ Examples:
                 print("\n⚠️  --fail-on-error is JMeter only; ignoring for --test-type gatling.")
             elif stats is None:
                 print("\n⚠️  --fail-on-error set but results summary could not be loaded; skipping assertion.")
-            elif not assert_jmeter_error_rate(stats, args.max_error_pct):
+            elif not assert_jmeter_results(stats, args.max_error_pct,
+                                            args.max_avg_response_time, args.max_response_time):
                 sys.exit(1)
 
     print("\n" + "=" * 70)
