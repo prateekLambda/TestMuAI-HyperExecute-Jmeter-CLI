@@ -62,7 +62,7 @@ python hyperexecute_automation.py \
 
 The script needs to know where the `.jmx` test plan lives.
 
-- **Already uploaded to the project workspace?** Pass its path with `--jmx-path` (or set `HYPEREXECUTE_JMX_PATH`). Default: `hyperexecute-jmeter-/test.jmx`.
+- **Already uploaded to the project workspace?** Pass its path with `--jmx-path` (or set `HYPEREXECUTE_JMX_PATH`). Default: `Ecommerce.jmx`.
 - **Only have it locally?** Upload it (and any supporting files, like CSV data) as part of the run with `--upload-jmx`:
 
 ```bash
@@ -244,7 +244,7 @@ Full option reference:
 | `--duration` | int | 120 | Test duration in seconds |
 | `--rampup` | int | 60 | Ramp-up period in seconds (JMeter only) |
 | `--concurrency` | int | 1 | Job concurrency level |
-| `--jmx-path` | str | `hyperexecute-jmeter-/test.jmx` | Path to the `.jmx` file inside the project workspace (or `HYPEREXECUTE_JMX_PATH` env var) |
+| `--jmx-path` | str | `Ecommerce.jmx` | Path to the `.jmx` file inside the project workspace (or `HYPEREXECUTE_JMX_PATH` env var) |
 | `--upload-jmx` | str | — | Local file or directory to upload before triggering the job |
 | `--variable` | str | — | JMeter property override as `KEY=VALUE`, passed to the JMX as `-J<key>=<value>` (JMeter only). Repeatable |
 | `--gatling-mode` | str | — | `stress`, `capacity`, or `soak` (required when `--test-type gatling`) |

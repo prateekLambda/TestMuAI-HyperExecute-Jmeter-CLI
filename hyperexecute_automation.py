@@ -164,7 +164,7 @@ class HyperExecuteAPI:
     def trigger_job(self, users: int, duration: int, rampup: int,
                    concurrency: int = 1, splitcsv: bool = False,
                    job_label: Optional[str] = None,
-                   jmx_path: str = "hyperexecute-jmeter-/test.jmx",
+                   jmx_path: str = "Ecommerce.jmx",
                    runtime_language: str = "java", runtime_version: str = "11",
                    region: Optional[str] = None,
                    global_timeout: Optional[int] = None,
@@ -714,9 +714,9 @@ Examples:
                        help='Output filename for downloaded artifact (default: auto-generated)')
     parser.add_argument('--job-label', type=str, default=None,
                        help='Custom job label for dashboard display (default: auto-generated from test parameters)')
-    parser.add_argument('--jmx-path', type=str, default='hyperexecute-jmeter-/test.jmx',
+    parser.add_argument('--jmx-path', type=str, default='Ecommerce.jmx',
                        help='Path to the .jmx file relative to the HyperExecute project workspace '
-                            '(or set HYPEREXECUTE_JMX_PATH env var; default: hyperexecute-jmeter-/test.jmx). '
+                            '(or set HYPEREXECUTE_JMX_PATH env var; default: Ecommerce.jmx). '
                             'Ignored if --upload-jmx is used and the upload returns a remote path.')
     parser.add_argument('--upload-jmx', type=str, default=None,
                        help='Local path to a .jmx file, or a directory (uploaded recursively, '
@@ -760,7 +760,7 @@ Examples:
     username = args.username or os.environ.get('LT_USERNAME') or os.environ.get('LAMBDATEST_USERNAME')
     api_key = args.api_key or os.environ.get('LT_ACCESS_KEY') or os.environ.get('LAMBDATEST_API_KEY')
     project_id = args.project_id or os.environ.get('HYPEREXECUTE_PROJECT_ID')
-    jmx_path = args.jmx_path or os.environ.get('HYPEREXECUTE_JMX_PATH', 'hyperexecute-jmeter-/test.jmx')
+    jmx_path = args.jmx_path or os.environ.get('HYPEREXECUTE_JMX_PATH', 'Ecommerce.jmx')
     gatling_path = args.gatling_path
 
     # Validate required credentials
