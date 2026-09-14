@@ -110,7 +110,7 @@ jobs:
           HYPEREXECUTE_PROJECT_ID: ${{ inputs.project-id || secrets.HYPEREXECUTE_PROJECT_ID }}
         run: |
           set -e
-          args=(--test-type "${{ inputs.test-type }}" --duration "${{ inputs.duration }}" --abort-on-cancel --debug)
+          args=(--test-type "${{ inputs.test-type }}" --duration "${{ inputs.duration }}" --abort-on-cancel --debug --print-summary)
 
           if [ "${{ inputs.test-type }}" = "gatling" ]; then
             args+=(--gatling-mode "${{ inputs.gatling-mode }}")

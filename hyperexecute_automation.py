@@ -647,6 +647,57 @@ class HyperExecuteAPI:
             return False
 
 
+def print_test_summary(zip_path: str, test_type: str) -> None:
+    """
+    Extract and print a results summary table from a downloaded JMeter/Gatling
+    results zip, so key metrics are visible directly in CI console logs
+    (e.g. Azure Pipelines / GitHub Actions) without opening the artifact.
+    """
+    import zipfile
+
+    stats_suffix = 'js/global_stats.json' if test_type == 'gatling' else 'statistics.json'
+
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            stats_entry = next((n for n in zf.namelist() if n.endswith(stats_suffix)), None)
+            if not stats_entry:
+                print(f"\nℹ️  No {stats_suffix} found in {zip_path}; skipping results summary.")
+                return
+            with zf.open(stats_entry) as f:
+                stats = json.load(f)
+    except (zipfile.BadZipFile, OSError, json.JSONDecodeError) as e:
+        print(f"\n⚠️  Could not read results summary from {zip_path}: {e}")
+        return
+
+    print("\n" + "=" * 70)
+    print("📈 Test Results Summary")
+    print("=" * 70)
+
+    if test_type == 'gatling':
+        num_requests = stats.get('numberOfRequests', {})
+        mean_resp = stats.get('meanResponseTime', {})
+        min_resp = stats.get('minResponseTime', {})
+        max_resp = stats.get('maxResponseTime', {})
+        mean_rps = stats.get('meanNumberOfRequestsPerSecond', {})
+        print(f"  Requests (total/ok/ko): {num_requests.get('total', 'N/A')} / "
+              f"{num_requests.get('ok', 'N/A')} / {num_requests.get('ko', 'N/A')}")
+        print(f"  Mean response time:     {mean_resp.get('total', 'N/A')} ms")
+        print(f"  Min / Max response:     {min_resp.get('total', 'N/A')} / {max_resp.get('total', 'N/A')} ms")
+        print(f"  Mean requests/sec:      {mean_rps.get('total', 'N/A')}")
+    else:
+        header = f"  {'Label':<30} {'Samples':>8} {'Error%':>8} {'Avg(ms)':>9} {'Min(ms)':>9} {'Max(ms)':>9} {'Throughput/s':>13}"
+        print(header)
+        print("  " + "-" * (len(header) - 2))
+        for label, s in stats.items():
+            print(
+                f"  {label:<30} {s.get('sampleCount', 0):>8} "
+                f"{s.get('errorPct', 0):>7.2f}% {s.get('meanResTime', 0):>9.1f} "
+                f"{s.get('minResTime', 0):>9.1f} {s.get('maxResTime', 0):>9.1f} "
+                f"{s.get('throughput', 0):>13.2f}"
+            )
+    print("=" * 70)
+
+
 def main():
     """Main function to run the automation workflow"""
     
@@ -747,6 +798,11 @@ Examples:
                        help='Enable debug mode with verbose output for CI/CD troubleshooting')
     parser.add_argument('--no-download', action='store_true',
                        help='Skip artifact download (useful for CI/CD where you just need job completion)')
+    parser.add_argument('--print-summary', action='store_true',
+                       help='After downloading, parse statistics.json (JMeter) / js/global_stats.json '
+                            '(Gatling) out of the results zip and print a results summary table to stdout, '
+                            'so key metrics show up directly in CI console logs (e.g. Azure Pipelines / '
+                            'GitHub Actions) without opening the artifact. Ignored if --no-download is set.')
     parser.add_argument('--abort-on-cancel', action='store_true',
                        help='If the script receives SIGINT/SIGTERM (e.g. the CI job is cancelled), '
                             'attempt to abort the in-progress HyperExecute job via the platform API '
@@ -970,18 +1026,23 @@ Examples:
         print(f"🔗 Job ID: {job_id}")
         print(f"🔗 View in dashboard: https://hyperexecute.lambdatest.com/hyperexecute/jobs/{job_id}")
     else:
+        artifact_name = "Gatling" if args.test_type == 'gatling' else "JMeter"
+        output_filename = args.output or f"{job_id}_{artifact_name}.zip"
         download_success = api.download_artifact(
             job_id=job_id,
-            artifact_name="Gatling" if args.test_type == 'gatling' else "JMeter",
-            output_filename=args.output
+            artifact_name=artifact_name,
+            output_filename=output_filename
         )
-        
+
         if not download_success:
             print("\n❌ Failed to download artifacts. Exiting.")
             if args.debug:
                 print(f"🐛 Debug Info: Job ID {job_id} - Download failed, but job completed successfully")
                 print(f"🐛 You can manually download from: https://hyperexecute.lambdatest.com/hyperexecute/jobs/{job_id}")
             sys.exit(1)
+
+        if args.print_summary:
+            print_test_summary(output_filename, args.test_type)
     
     print("\n" + "=" * 70)
     print("🎉 Workflow completed successfully!")

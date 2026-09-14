@@ -112,7 +112,7 @@ jobs:
       - script: |
           set -e
 
-          args=(--test-type "${{ parameters.testType }}" --duration "${{ parameters.duration }}" --abort-on-cancel --debug)
+          args=(--test-type "${{ parameters.testType }}" --duration "${{ parameters.duration }}" --abort-on-cancel --debug --print-summary)
 
           if [ "${{ parameters.testType }}" = "gatling" ]; then
             args+=(--gatling-mode "${{ parameters.gatlingMode }}")
