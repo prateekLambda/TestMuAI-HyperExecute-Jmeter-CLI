@@ -647,11 +647,11 @@ class HyperExecuteAPI:
             return False
 
 
-def print_test_summary(zip_path: str, test_type: str) -> None:
+def load_results_stats(zip_path: str, test_type: str) -> Optional[Dict[str, Any]]:
     """
-    Extract and print a results summary table from a downloaded JMeter/Gatling
-    results zip, so key metrics are visible directly in CI console logs
-    (e.g. Azure Pipelines / GitHub Actions) without opening the artifact.
+    Extract statistics.json (JMeter) / js/global_stats.json (Gatling) from a
+    downloaded results zip and return it parsed, or None if it couldn't be
+    found/read (a warning is printed in that case; this is not fatal).
     """
     import zipfile
 
@@ -662,13 +662,20 @@ def print_test_summary(zip_path: str, test_type: str) -> None:
             stats_entry = next((n for n in zf.namelist() if n.endswith(stats_suffix)), None)
             if not stats_entry:
                 print(f"\nℹ️  No {stats_suffix} found in {zip_path}; skipping results summary.")
-                return
+                return None
             with zf.open(stats_entry) as f:
-                stats = json.load(f)
+                return json.load(f)
     except (zipfile.BadZipFile, OSError, json.JSONDecodeError) as e:
         print(f"\n⚠️  Could not read results summary from {zip_path}: {e}")
-        return
+        return None
 
+
+def print_test_summary(stats: Dict[str, Any], test_type: str) -> None:
+    """
+    Print a results summary table (parsed via load_results_stats) so key
+    metrics are visible directly in CI console logs (e.g. Azure Pipelines /
+    GitHub Actions) without opening the artifact.
+    """
     print("\n" + "=" * 70)
     print("📈 Test Results Summary")
     print("=" * 70)
@@ -696,6 +703,28 @@ def print_test_summary(zip_path: str, test_type: str) -> None:
                 f"{s.get('throughput', 0):>13.2f}"
             )
     print("=" * 70)
+
+
+def assert_jmeter_error_rate(stats: Dict[str, Any], max_error_pct: float) -> bool:
+    """
+    Fail the assertion if the JMeter "Total" row's error percentage exceeds
+    max_error_pct. Prints the pass/fail verdict. Returns True if it passed.
+    """
+    total = stats.get('Total', {})
+    error_pct = total.get('errorPct', 0.0)
+
+    print("\n" + "=" * 70)
+    print("🔎 Assertion: JMeter error rate")
+    print("=" * 70)
+    if error_pct > max_error_pct:
+        print(f"❌ FAILED: error rate {error_pct:.2f}% exceeds allowed max {max_error_pct:.2f}%")
+        print(f"   Samples: {total.get('sampleCount', 'N/A')}, Errors: {total.get('errorCount', 'N/A')}")
+        print("=" * 70)
+        return False
+
+    print(f"✅ PASSED: error rate {error_pct:.2f}% is within allowed max {max_error_pct:.2f}%")
+    print("=" * 70)
+    return True
 
 
 def main():
@@ -803,6 +832,14 @@ Examples:
                             '(Gatling) out of the results zip and print a results summary table to stdout, '
                             'so key metrics show up directly in CI console logs (e.g. Azure Pipelines / '
                             'GitHub Actions) without opening the artifact. Ignored if --no-download is set.')
+    parser.add_argument('--fail-on-error', action='store_true',
+                       help='JMeter only: after downloading, assert that the "Total" error percentage in '
+                            'statistics.json does not exceed --max-error-pct. If it does, the script exits '
+                            'with a non-zero status, failing the CI job/pipeline. Ignored if --no-download '
+                            'is set or --test-type is gatling.')
+    parser.add_argument('--max-error-pct', type=float, default=0.0,
+                       help='Maximum allowed JMeter error percentage for --fail-on-error (default: 0.0, '
+                            'i.e. any error fails the assertion)')
     parser.add_argument('--abort-on-cancel', action='store_true',
                        help='If the script receives SIGINT/SIGTERM (e.g. the CI job is cancelled), '
                             'attempt to abort the in-progress HyperExecute job via the platform API '
@@ -1041,9 +1078,20 @@ Examples:
                 print(f"🐛 You can manually download from: https://hyperexecute.lambdatest.com/hyperexecute/jobs/{job_id}")
             sys.exit(1)
 
-        if args.print_summary:
-            print_test_summary(output_filename, args.test_type)
-    
+        stats = None
+        if args.print_summary or (args.fail_on_error and args.test_type != 'gatling'):
+            stats = load_results_stats(output_filename, args.test_type)
+            if args.print_summary and stats is not None:
+                print_test_summary(stats, args.test_type)
+
+        if args.fail_on_error:
+            if args.test_type == 'gatling':
+                print("\n⚠️  --fail-on-error is JMeter only; ignoring for --test-type gatling.")
+            elif stats is None:
+                print("\n⚠️  --fail-on-error set but results summary could not be loaded; skipping assertion.")
+            elif not assert_jmeter_error_rate(stats, args.max_error_pct):
+                sys.exit(1)
+
     print("\n" + "=" * 70)
     print("🎉 Workflow completed successfully!")
     print(f"📋 Job ID: {job_id}")

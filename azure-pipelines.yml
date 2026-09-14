@@ -122,7 +122,7 @@ jobs:
               args+=(--users "${{ parameters.users }}")
             fi
           else
-            args+=(--users "${{ parameters.users }}" --rampup "${{ parameters.rampup }}" --upload-jmx "Ecommerce.jmx")
+            args+=(--users "${{ parameters.users }}" --rampup "${{ parameters.rampup }}" --upload-jmx "Ecommerce.jmx" --fail-on-error)
           fi
 
           if [ -n "${{ parameters.region }}" ] && [ "${{ parameters.region }}" != "none" ]; then
